@@ -51,6 +51,7 @@ int main()
     if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
       fprintf(stderr,"(MODIFICATION %d) erreur de msgsnd",getpid());
     }
+    exit(0);
   }
 
   // Connexion à la base de donnée
@@ -128,7 +129,7 @@ int main()
   fprintf(stderr,"(MODIFICATION %d) Libération du sémaphore 0\n",getpid());
   action.sem_num=0;
   action.sem_op=1;
-  action.sem_flg=IPC_NOWAIT;
+  action.sem_flg=1;
   semop(idSem,&action,1);
   exit(0);
 }

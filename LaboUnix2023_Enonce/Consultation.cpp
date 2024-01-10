@@ -34,7 +34,7 @@ int main()
   // Lecture de la requête CONSULT
   fprintf(stderr,"(CONSULTATION %d) Lecture requete CONSULT\n",getpid());
   if (msgrcv(idQ,&m,sizeof(MESSAGE)-sizeof(long),getpid(),0) == -1){
-    fprintf(stderr,"(SERVEUR) Erreur de msgrcv",getpid());
+    fprintf(stderr,"(CONSULTATION) Erreur de msgrcv",getpid());
     exit(1);
   }
   // Tentative de prise bloquante du semaphore 0

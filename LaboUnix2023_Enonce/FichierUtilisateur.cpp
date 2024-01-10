@@ -17,7 +17,9 @@ int estPresent(const char* nom)
       }
       i++;
     }
+   close(fp);
   }
+
   return 0;
 }
 
@@ -45,6 +47,7 @@ void ajouteUtilisateur(const char* nom, const char* motDePasse)
   }
   else{
     write(fp,&util,sizeof(util));
+    close(fp);
   }
 }
 
@@ -63,6 +66,7 @@ int verifieMotDePasse(int pos, const char* motDePasse)
     if(util.hash==hash(motDePasse)){
       return 1;
     }
+    close(fp);
   }
   return 0;
 }

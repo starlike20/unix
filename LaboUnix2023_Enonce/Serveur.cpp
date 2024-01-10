@@ -17,8 +17,9 @@
 #include "FichierUtilisateur.h"
 #include <sys/shm.h>
 #include <time.h>
-int idQ,idShm,idSem;
+int idQ,idShm,idSem,idShms,id1;
 TAB_CONNEXIONS *tab;
+sigjmp_buf contexte;
 
 void afficheTab();
 void connect(int a,int b);
@@ -26,6 +27,7 @@ void logi(int pid,const char*nom);
 void loginn(MESSAGE m);
 int verificonect(const char*nom);
 void HandlerSIGINT(int sig);
+void HandlerSIGCHILD(int sig);
 void accept(MESSAGE m);
 void decon(MESSAGE m);
 void refus(MESSAGE m);
@@ -35,18 +37,15 @@ void addbd(MESSAGE m);
 void ajoutmodif(MESSAGE*m,int idm);
 
 MYSQL* connexion;
+struct sembuf action;
+
+void sem(int a,int b);
 
 
 int main()
 {
-  int id1,idm;
+  int idm,c;
   // Connection à la BD
-  connexion = mysql_init(NULL);
-  if (mysql_real_connect(connexion,"localhost","Student","PassStudent1_","PourStudent",0,0,0) == NULL)
-  {
-    fprintf(stderr,"(SERVEUR) Erreur de connexion à la base de données...\n");
-    exit(1);  
-  }
 
   // Armement des signaux
   struct sigaction B;
@@ -55,60 +54,130 @@ int main()
   sigemptyset(&B.sa_mask);
   sigaction(SIGINT,&B,NULL);
 
-  // Creation des ressources
-  fprintf(stderr,"(SERVEUR %d) Creation de la file de messages\n",getpid());
-  if ((idQ = msgget(CLE,IPC_CREAT | 0600)) == -1)  // CLE definie dans protocole.h
+  struct sigaction A;
+  A.sa_handler = HandlerSIGCHILD;
+  A.sa_flags = 0;
+  sigemptyset(&A.sa_mask);
+  sigaction(SIGCHLD,&A,NULL);
+
+  fprintf(stderr,"(SERVEUR %d) Recuperation de l'id de la mémoire partagée\n",getpid());
+  if ((idShms = shmget(123,0,0)) == -1)  
   {
-    perror("(SERVEUR) Erreur de msgget");
-    exit(1);
-  }
+    printf("premier serveur lancer\n");
+    if ((idShms = shmget(123,200,IPC_CREAT | IPC_EXCL | 0600)) == -1){
+      perror("(SERVEUR) Erreur de shmget");
+      exit(1);
+    }
+    // Creation des ressources
+    fprintf(stderr,"(SERVEUR %d) Creation de la file de messages\n",getpid());
+    if ((idQ = msgget(CLE,IPC_CREAT | IPC_EXCL | 0600)) == -1)  // CLE definie dans protocole.h
+    {
+      perror("(SERVEUR) Erreur de msgget");
+      exit(1);
+    }
 
-  if ((idShm = shmget(CLE,200,IPC_CREAT | IPC_EXCL | 0600)) == -1){
-    perror("(SERVEUR) Erreur de shmget");
-    exit(1);
-  }
-  if ((idSem = semget(CLE,1,IPC_CREAT | IPC_EXCL | 0600)) == -1)
-  {
-    perror("Erreur de semget");
-    exit(1);
-  }
-  struct sembuf action;
-  action.sem_num=0;
-  action.sem_op=1;
-  action.sem_flg=0;
-  semop(idSem,&action,1);
+    if ((idShm = shmget(CLE,200,IPC_CREAT | IPC_EXCL | 0600)) == -1){
+      perror("(SERVEUR) Erreur de shmget");
+      exit(1);
+    }
+    if ((idSem = semget(CLE,2,IPC_CREAT | IPC_EXCL | 0600)) == -1)
+    {
+      perror("Erreur de semget");
+      exit(1);
+    }
+    if((tab = (TAB_CONNEXIONS*)shmat(idShms,NULL,0))==NULL)
+    {
+      fprintf(stderr,"(SERVEUR %d) erreur d'attachement",getpid());
+    }
+    sem(0,1);
+    sem(1,1);
 
-  // Initialisation du tableau de connexions
-  fprintf(stderr,"(SERVEUR %d) Initialisation de la table des connexions\n",getpid());
-  tab = (TAB_CONNEXIONS*) malloc(sizeof(TAB_CONNEXIONS)); 
+    sem(1,-1);
 
-  for (int i=0 ; i<6 ; i++)
-  {
-    tab->connexions[i].pidFenetre = 0;
-    strcpy(tab->connexions[i].nom,"");
-    for (int j=0 ; j<5 ; j++) tab->connexions[i].autres[j] = 0;
-    tab->connexions[i].pidModification = 0;
-  }
-  tab->pidServeur1 = getpid();
-  tab->pidServeur2 = 0;
-  tab->pidAdmin = 0;
-  tab->pidPublicite = 0;
+    // Initialisation du tableau de connexions
+    fprintf(stderr,"(SERVEUR %d) Initialisation de la table des connexions\n",getpid());
+    //tab = (TAB_CONNEXIONS*) malloc(sizeof(TAB_CONNEXIONS)); 
 
-  afficheTab();
+    for (int i=0 ; i<6 ; i++)
+    {
+      tab->connexions[i].pidFenetre = 0;
+      strcpy(tab->connexions[i].nom,"");
+      for (int j=0 ; j<5 ; j++) tab->connexions[i].autres[j] = 0;
+      tab->connexions[i].pidModification = 0;
+    }
+    tab->pidServeur1 = getpid();
+    tab->pidServeur2 = 0;
+    tab->pidAdmin = 0;
+    tab->pidPublicite = 0;
 
-  // Creation du processus Publicite
-  /*int idp,id;
-  if((id=fork())!=-1){
-    if(id==0){
-      if(execl("./Publicite","Publicite",NULL)==-1){
-        fprintf(stderr,"(SERVEUR)Erreur de execl");
+    sem(1,1);
+
+    afficheTab();
+
+    // Creation du processus Publicite
+    int idp,id;
+    /*if((id=fork())!=-1){
+      if(id==0){
+        if(execl("./Publicite","Publicite",NULL)==-1){
+          fprintf(stderr,"(SERVEUR)Erreur de execl");
+        }
       }
     }
+    sem(1,-1);
+    tab->pidPublicite=id;
+    sem(1,1);*/
   }
-  tab->pidPublicite=id;*/
+  else{
+    if((tab = (TAB_CONNEXIONS*)shmat(idShms,NULL,0))==NULL)
+    {
+      fprintf(stderr,"(SERVEUR %d) erreur d'attachement",getpid());
+    }
+    sem(1,-1);
+    if(tab->pidServeur1==0 || kill(tab->pidServeur1,0)==-1){
+      tab->pidServeur1=getpid();
+      if((idQ = msgget(CLE,0))==-1)
+      {
+        fprintf(stderr,"(SERVEUR %d) erreur de Recuperation de l'id de la file de messages\n",getpid());
+      }
+      if ((idSem = semget(CLE,0,0)) == -1)
+      {
+        fprintf(stderr,"(SERVEUR %d)Erreur de semget",getpid());
+        exit(1);
+      }
+      if((idShm = shmget(CLE,0,0)) == -1){
+        fprintf(stderr,"(SERVEUR %d) shmget\n",getpid());
+      }
+    }
+    else{ 
+      if(tab->pidServeur2==0 || kill(tab->pidServeur2,0)==-1){
+        tab->pidServeur2=getpid();
+        if((idQ = msgget(CLE,0))==-1)
+        {
+          fprintf(stderr,"(SERVEUR %d) erreur de Recuperation de l'id de la file de messages\n",getpid());
+        }
+        if ((idSem = semget(CLE,0,0)) == -1)
+        {
+          fprintf(stderr,"(SERVEUR %d)Erreur de semget",getpid());
+          exit(1);
+        }
+        if((idShm = shmget(CLE,0,0)) == -1){
+          fprintf(stderr,"(SERVEUR %d) shmget\n",getpid());
+        }
+      }
+      else{
+        if (shmdt(tab) == -1) {
+          perror("Erreur de shmdt");
+        }
+        printf("deux serveur sont deja lancer \n");
+        exit(0);
+      }
+    }
+    sem(1,1);
+  }
 
-  int i,k,j;
+  int i,k,j,tr;
   MESSAGE m;
+  
   MESSAGE reponse;
   char requete[200];
   MYSQL_RES  *resultat;
@@ -117,6 +186,7 @@ int main()
 
   while(1)
   {
+    sigsetjmp(contexte,1);
   	fprintf(stderr,"(SERVEUR %d) Attente d'une requete...\n",getpid());
     if (msgrcv(idQ,&m,sizeof(MESSAGE)-sizeof(long),1,0) == -1)
     {
@@ -129,43 +199,65 @@ int main()
     {
       case CONNECT :  
                       fprintf(stderr,"(SERVEUR %d) Requete CONNECT reçue de %d\n",getpid(),m.expediteur);
+                      sem(1,-1);
                       connect(m.expediteur,0);
+                      sem(1,1);
                       break; 
 
       case DECONNECT :  
                       fprintf(stderr,"(SERVEUR %d) Requete DECONNECT reçue de %d\n",getpid(),m.expediteur);
+                      sem(1,-1);
                       logi(m.expediteur,"");
                       connect(0,m.expediteur);
+                      sem(1,1);
                       break; 
 
       case LOGIN :  
                       fprintf(stderr,"(SERVEUR %d) Requete LOGIN reçue de %d : --%s--%s--%s--\n",getpid(),m.expediteur,m.data1,m.data2,m.texte);
+                      sem(1,-1);
                       loginn(m);
+                      sem(1,1);
                       break; 
 
       case LOGOUT :  
                       fprintf(stderr,"(SERVEUR %d) Requete LOGOUT reçue de %d\n",getpid(),m.expediteur);
+                      sem(1,-1);
                       decon(m);
+                      sem(1,1);
                       break;
 
       case ACCEPT_USER :
                       fprintf(stderr,"(SERVEUR %d) Requete ACCEPT_USER reçue de %d\n",getpid(),m.expediteur);
+                      sem(1,-1);
                       accept(m);
+                      sem(1,1);
                       break;
 
       case REFUSE_USER :
-                      fprintf(stderr,"(SERVEUR %d) Requete REFUSE_USER reçue de %d\n",getpid(),m.expediteur);
+                      fprintf(stderr,"(SERVEUR %d) Requete REFUSE_USER reçue de %d\n",getpid(),m.expediteur);  
+                      sem(1,-1);
+
                       refus(m);
+
+                      sem(1,1);
                       break;
 
       case SEND :  
-                      fprintf(stderr,"(SERVEUR %d) Requete SEND reçue de %d\n",getpid(),m.expediteur);
+                      fprintf(stderr,"(SERVEUR %d) Requete SEND reçue de %d\n",getpid(),m.expediteur);                      
+                      sem(1,-1);
+
                       sen(m);
+
+                      sem(1,1);
                       break; 
 
       case UPDATE_PUB :
                       fprintf(stderr,"(SERVEUR %d) Requete UPDATE_PUB reçue de %d\n",getpid(),m.expediteur);
+                      sem(1,-1);
                       pube();
+
+
+                      sem(1,1);
                       break;
 
       case CONSULT :
@@ -192,7 +284,9 @@ int main()
                           }
                         }
                       }
+                      sem(1,-1);
                       ajoutmodif(&m,idm);
+                      sem(1,1);
                       m.type=idm;
                       if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
                         fprintf(stderr,"(SERVEUR %d) erreur de msgsnd",getpid());
@@ -201,7 +295,21 @@ int main()
 
       case MODIF2 :
                       fprintf(stderr,"(SERVEUR %d) Requete MODIF2 reçue de %d\n",getpid(),m.expediteur);
-                      m.type=idm;
+                      //printf("modif2\n");
+                      sem(1,-1);
+                      i=0;
+                      tr=0;
+                      while(tr==0 && i<6){
+                        if(tab->connexions[i].pidFenetre==m.expediteur){
+                          tr=1;
+                          //strcpy(m->data1,tab->connexions[i].nom);
+                          c=tab->connexions[i].pidModification;
+                        }
+                        i++;
+                      }
+                      //printf("%d\n",c);
+                      sem(1,1);
+                      m.type=c;
                       m.requete=MODIF2;
                       if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
                         fprintf(stderr,"(SERVEUR %d) erreur de msgsnd",getpid());
@@ -210,8 +318,10 @@ int main()
                       break;
 
       case LOGIN_ADMIN :
+                      sem(1,-1);
+
                       fprintf(stderr,"(SERVEUR %d) Requete LOGIN_ADMIN reçue de %d\n",getpid(),m.expediteur);
-                      if(tab->pidAdmin==0){
+                      if(tab->pidAdmin==0 || kill(tab->pidAdmin,0)==0){
                         tab->pidAdmin=m.expediteur;
                         strcpy(m.data1,"OK");  
                       }
@@ -222,24 +332,125 @@ int main()
                       if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
                         fprintf(stderr,"(SERVEUR %d) erreur de msgsnd",getpid());
                       }
+
+                      sem(1,1);
                       break;
 
       case LOGOUT_ADMIN :
+
+                      sem(1,-1);
+
                       fprintf(stderr,"(SERVEUR %d) Requete LOGOUT_ADMIN reçue de %d\n",getpid(),m.expediteur);
                       tab->pidAdmin=0;
+
+
+                      sem(1,1);
                       break;
 
       case NEW_USER :
                       fprintf(stderr,"(SERVEUR %d) Requete NEW_USER reçue de %d : --%s--%s--\n",getpid(),m.expediteur,m.data1,m.data2);
-                      loginn(m);
+                      if(estPresent(m.data1)>0){
+                        strcpy(m.data1,"KO");
+                        strcpy(m.texte,"utilisateur deja existant");
+                      }
+                      else{
+                        if(estPresent(m.data1)<=0){
+                          ajouteUtilisateur(m.data1,m.data2);
+                          strcpy(m.texte,"nouvel utilisateur créé");
+                          strcpy(m.data1,"OK");
+                          addbd(m);
+                        }
+                        else{
+                          strcpy(m.data1,"KO");
+                          strcpy(m.texte,"erreur");
+                        }
+                      }
+                      m.type=m.expediteur;
+                    if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
+                      printf("(SERVEUR)erreur de msgget\n");
+                    }
                       break;
 
       case DELETE_USER :
+                    int i;
                       fprintf(stderr,"(SERVEUR %d) Requete DELETE_USER reçue de %d : --%s--\n",getpid(),m.expediteur,m.data1);
+                      i=estPresent(m.data1);
+                      if(i>0){
+                        UTILISATEUR util;
+                        int fp;
+                        if((fp=open(FICHIER_UTILISATEURS,O_WRONLY|O_CREAT,0644))==-1){
+                          perror("1.Erreur de open()");
+                          strcpy(m.data1,"KO");
+                          strcpy(m.texte,"ouverture");
+                        }
+                        else{
+                          fprintf(stderr,"(SERVEUR %d) Prise bloquante du sémaphore 0\n",getpid());
+                          sem(0,-1);
+                          sleep(1);
+
+                          // Connexion à la base de donnée
+                          MYSQL *connexion = mysql_init(NULL);
+                          fprintf(stderr,"(SERVEUR %d) Connexion à la BD\n",getpid());
+                          if (mysql_real_connect(connexion,"localhost","Student","PassStudent1_","PourStudent",0,0,0) == NULL)
+                          {
+                            fprintf(stderr,"(SERVEUR) Erreur de connexion à la base de données...\n");
+                            exit(1);  
+                          }
+
+                          // Recherche des infos dans la base de données
+                          fprintf(stderr,"(SERVEUR %d) Consultation en BD (%s)\n",getpid(),m.data1);
+                          MYSQL_RES  *resultat;
+                          MYSQL_ROW  tuple;
+                          char requete[200];
+                          sprintf(requete," delete from UNIX_FINAL WHERE nom='%s'",m.data1);
+                          mysql_query(connexion,requete),
+                          printf("%d \n",i);
+                          strcpy(util.nom,"-1");
+                          util.hash=-1;
+                          printf("%d \n",lseek(fp,(i-1)*sizeof(util),SEEK_SET));
+                          write(fp,&util,sizeof(util));
+                          close(fp);
+
+                           mysql_close(connexion);
+
+                          // Libération du semaphore 0
+                          sem(0,1);
+                          fprintf(stderr,"(SERVEUR %d) Libération du sémaphore 0\n",getpid());
+                          strcpy(m.data1,"OK");
+                          strcpy(m.texte,"suppression reussi");
+                       }
+                      }
+                      else{
+                        strcpy(m.data1,"KO");
+                        strcpy(m.texte,"utilisateur inconnu....");
+                      }
+                      m.type=m.expediteur;
+                      if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
+                        printf("(SERVEUR)erreur de msgget\n");
+                      }
                       break;
 
       case NEW_PUB :
                       fprintf(stderr,"(SERVEUR %d) Requete NEW_PUB reçue de %d\n",getpid(),m.expediteur);
+                      PUBLICITE pub;
+                      int fp;
+                      strcpy(pub.texte,m.texte);
+                      pub.nbSecondes=atoi(m.data1);
+                      //printf("%s,%d \n",pub.texte,pub.nbSecondes);
+                      if((fp=open("publicites.dat",O_WRONLY|O_APPEND,0644))==-1){
+                        if((fp=open("publicites.dat",O_WRONLY|O_CREAT|O_APPEND,0644))==-1){
+                          perror("(SERVEUR)1.Erreur de open()");
+                        }
+                        else{
+                          kill(tab->pidPublicite,SIGUSR1);
+                          write(fp,&pub,sizeof(pub));
+                          close(fp);
+                        }
+                      }
+                      else{
+                        write(fp,&pub,sizeof(pub));
+                        close(fp);
+                      }
                       break;
     }
     afficheTab();
@@ -248,6 +459,7 @@ int main()
 
 void afficheTab()
 {
+  sem(1,-1);
   fprintf(stderr,"Pid Serveur 1 : %d\n",tab->pidServeur1);
   fprintf(stderr,"Pid Serveur 2 : %d\n",tab->pidServeur2);
   fprintf(stderr,"Pid Publicite : %d\n",tab->pidPublicite);
@@ -262,6 +474,7 @@ void afficheTab()
                                                       tab->connexions[i].autres[4],
                                                       tab->connexions[i].pidModification);
   fprintf(stderr,"\n");
+  sem(1,1);
 }
 void connect(int a,int b){
   int tr=0,i=0;
@@ -271,6 +484,11 @@ void connect(int a,int b){
       tab->connexions[i].pidFenetre=a;
     }
     i++;
+  }
+  if(tr==0){
+    if(b==0){
+      kill(a,SIGINT);
+    }
   }
 }
 void logi(int pid,const char*nom){
@@ -372,22 +590,88 @@ void loginn(MESSAGE m){
 }
 
 void HandlerSIGINT(int sig){
-  msgctl(idQ,IPC_RMID,NULL);
-  delete[] tab;
-  mysql_close(connexion);
-  if (shmctl(idShm,IPC_RMID,NULL) == -1)
-  {
-    perror("(SERVEUR)Erreur de shmctl");
-    exit(1);
+
+  sem(1,-1);
+
+  if(tab->pidServeur1==getpid()){
+    tab->pidServeur1=0;
   }
-  if (semctl(idSem,0,IPC_RMID) == -1)
-  {
-    perror("Erreur de semctl (3)");
-    exit(1);
+  else{
+    if(tab->pidServeur2==getpid()){
+      tab->pidServeur2=0;
+    }
   }
-  kill(tab->pidPublicite,SIGQUIT);
+  if((tab->pidServeur1==0 || kill(tab->pidServeur1,0)==-1)&&(tab->pidServeur2==0 || kill(tab->pidServeur2,0)==-1)){
+    int i=0,tr=0,idm;
+    while(tr==0 && i<6){
+      if(tab->connexions[i].pidFenetre!=0){
+        kill(tab->connexions[i].pidFenetre,SIGQUIT);
+      }
+      if((idm=tab->connexions[i].pidModification)!=0){
+        kill(idm,SIGQUIT);
+        //strcpy(m->data1,tab->connexions[i].nom);
+      } 
+      i++;
+    }
+    if(tab->pidAdmin!=0){
+      kill(tab->pidAdmin,SIGQUIT);
+    }
+    if(id1!=0){
+      kill(id1,SIGQUIT);
+    }
+    //kill(tab->pidPublicite,SIGQUIT);
+    if (shmdt(tab) == -1) {
+      perror("(SERVEUR)Erreur de shmdt");
+    }
+
+    msgctl(idQ,IPC_RMID,NULL);
+    mysql_close(connexion);
+    if (shmctl(idShm,IPC_RMID,NULL) == -1)
+    {
+      printf("%d\n",idShm);
+      perror("(SERVEUR)Erreur de shmctl");
+      exit(1);
+    }
+    if (shmctl(idShms,IPC_RMID,NULL) == -1)
+    {
+      perror("(SERVEUR)Erreur de shmctl");
+      exit(1);
+    }
+    if (semctl(idSem,0,IPC_RMID) == -1)
+    {
+      perror("(SERVEUR)Erreur de semctl (3)");
+      exit(1);
+    }
+  }
   exit(0);
+
 }
+
+void HandlerSIGCHILD(int sig){
+  int id, status;
+  if((id=wait(&status))!=-1){
+    if(id==tab->pidAdmin){
+      tab->pidAdmin=0;
+    }
+    else{
+      if(id==id1){
+        id1=0;
+      }
+      else{
+        int tr=0,i=0;
+        while(tr==0 && i<6){
+          if(tab->connexions[i].pidModification==id){
+            tr=1;
+            tab->connexions[i].pidModification=0;
+          }
+          i++;
+        }
+      }
+    }
+  } 
+  siglongjmp(contexte,1);
+}
+
 void accept(MESSAGE m){
   int i=0,j=0;
   int tr=0;
@@ -501,20 +785,22 @@ void pube(){
   int i=0;
   for(i=0;i<6;i++){
     if(tab->connexions[i].pidFenetre!=0){
-      printf("tue la fenetre %d",tab->connexions[i].pidFenetre);
+      //printf("tue la fenetre %d",tab->connexions[i].pidFenetre);
       kill(tab->connexions[i].pidFenetre,SIGUSR2);
     }
   }
 }
 void addbd(MESSAGE m){
   char requete[256];
-  printf("ajoutons \n");
+  //printf("ajoutons \n");
+  sem(0,-1);
   MYSQL* connexion = mysql_init(NULL);
   mysql_real_connect(connexion,"localhost","Student","PassStudent1_","PourStudent",0,0,0);
 
   sprintf(requete,"insert into UNIX_FINAL values (NULL,'%s','%s','%s');",m.data2,"-----","-----");
   mysql_query(connexion,requete);
   mysql_close(connexion);
+  sem(0,1);
 }
 void ajoutmodif(MESSAGE*m,int idm){
   int tr=0,i=0;
@@ -528,3 +814,9 @@ void ajoutmodif(MESSAGE*m,int idm){
   }
 }
 
+void sem(int a,int b){
+  action.sem_num=a;
+  action.sem_op=b;
+  action.sem_flg=0;
+  semop(idSem,&action,1);
+}

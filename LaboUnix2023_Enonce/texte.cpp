@@ -1,17 +1,31 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
+/*#include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <sys/sem.h>
 #include <mysql.h>
 #include <signal.h>
 #include <string.h>
-#include <unistd.h>
+#include <unistd.h>*/
 #include "protocole.h"
+#include "FichierUtilisateur.h"
 
 int main(int argc, char const *argv[])
 {
+  PUBLICITE pub;
+  int fp,i=0;
+  if((fp=open("publicites.dat",O_RDONLY))==-1){
+    perror("Erreur de open()");
+    return -1;
+  }
+  else{
+    while(read(fp,&pub,sizeof(pub))>0)
+    {
+     printf("nom:%s,hash:%d\n",pub.texte,pub.nbSecondes);
+    }
+  }
+  /*
   MYSQL *connexion = mysql_init(NULL);
   fprintf(stderr,"(CONSULTATION %d) Connexion à la BD\n",getpid());
   if (mysql_real_connect(connexion,"localhost","Student","PassStudent1_","PourStudent",0,0,0) == NULL)
@@ -33,5 +47,5 @@ int main(int argc, char const *argv[])
    printf("%s \n",tuple[1]);
    printf("%s \n",tuple[2]);
   }
-  return 0;
+  return 0;*/
 }

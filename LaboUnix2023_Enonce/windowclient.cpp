@@ -737,7 +737,7 @@ void handlerSIGUSR1(int sig)
                         }
                         i++;
                       }
-                      printf("%d,%s \n",(i-1),m.data1);
+                      //printf("%d,%s \n",(i-1),m.data1);
                        w->setPersonneConnectee((i-1),m.data1);
                        w->ajouteMessage(m.data1,"est connectee");
                     break;
@@ -783,7 +783,7 @@ void HandlerSIGINT(int sig){
   {
     fprintf(stderr,"(CLIENT %d) erreur de msgsnd",getpid());
   }
-  QApplication::exit();
+  exit(0);
 }
 
 void handlerSIGALRM(int sig){

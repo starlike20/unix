@@ -14,16 +14,23 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include "protocole.h" // contient la cle et la structure d'un message
-
+#include <setjmp.h>
 int idQ, idShm;
 int fd;
 char*pShm;
+void handlerSIGUSR1(int);
+sigjmp_buf contexte;
 
 int main()
 {
   int fd;
 
   // Armement des signaux
+  struct sigaction B;
+  B.sa_handler = handlerSIGUSR1;
+  B.sa_flags = 0;
+  sigemptyset(&B.sa_mask);
+  sigaction(SIGUSR1,&B,NULL);
 
   // Masquage de SIGINT
   sigset_t mask;
@@ -53,14 +60,12 @@ int main()
     fprintf(stderr,"(PUBLICITE %d) erreur d'attachement",getpid());
   }
 
-
+  sigsetjmp(contexte,1);
   // Ouverture du fichier de publicité
   if ((fd = open("publicites.dat",O_RDONLY, 0644)) == -1)
   {
     fprintf(stderr,"(PUBLICITE %d) erreur d'ouverture du fichier publicites.dat",getpid());
-    exit(1);
   }
-
 
   while(1)
   {
@@ -68,25 +73,29 @@ int main()
   	PUBLICITE pub;
 
     // Lecture d'une publicité dans le fichier
-
-    if(read(fd,&pub,sizeof(PUBLICITE))<sizeof(PUBLICITE)){
-      lseek(fd,0,SEEK_SET);
-    }
-    else{
-
-      // Ecriture en mémoire partagée
-
-      strcpy(pShm,pub.texte);
-      m.type=1;
-      m.requete=UPDATE_PUB;
-
-      // Envoi d'une requete UPDATE_PUB au serveur
-
-      if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
-        fprintf(stderr,"(PUBLICITE %d) erreur msgsnd",getpid());
+    if(fd!=-1){
+      if(read(fd,&pub,sizeof(PUBLICITE))<sizeof(PUBLICITE)){
+        lseek(fd,0,SEEK_SET);
       }
-      sleep(pub.nbSecondes);
+      else{
+
+        // Ecriture en mémoire partagée
+
+        strcpy(pShm,pub.texte);
+        m.type=1;
+        m.requete=UPDATE_PUB;
+
+        // Envoi d'une requete UPDATE_PUB au serveur
+
+        if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
+          fprintf(stderr,"(PUBLICITE %d) erreur msgsnd",getpid());
+        }
+        sleep(pub.nbSecondes);
+      }
     }
   }
 }
 
+void handlerSIGUSR1(int){
+  siglongjmp(contexte,1);
+}

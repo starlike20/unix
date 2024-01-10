@@ -133,21 +133,79 @@ void WindowAdmin::dialogueErreur(const char* titre,const char* message)
 void WindowAdmin::on_pushButtonAjouterUtilisateur_clicked()
 {
   // TO DO
+  MESSAGE m;
+  m.type=1;
+  strcpy(m.data1,getNom());
+  strcpy(m.data2,getMotDePasse());
+  m.requete=NEW_USER;
+  m.expediteur=getpid();
+  fprintf(stderr,"(ADMIN %d) Attente d'une requete...\n",getpid());
+  if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
+    fprintf(stderr,"(ADMIN %d) erreur de msgsnd",getpid());
+  }
+  fprintf(stderr,"(ADMIN %d) envoi de la requete au serveur\n",getpid());
+  if (msgrcv(idQ,&m,sizeof(MESSAGE)-sizeof(long),getpid(),0) == -1)
+  {
+    perror("(ADMIN) Erreur de msgrcv");
+  }
+  if(strcmp(m.data1,"OK")==0){
+    dialogueMessage("ajout",m.texte);
+  }
+  else{
+    dialogueErreur("ajout",m.texte);
+  }
+
 }
 
 void WindowAdmin::on_pushButtonSupprimerUtilisateur_clicked()
 {
   // TO DO
+  MESSAGE m;
+  m.type=1;
+  strcpy(m.data1,getNom());
+  m.requete=DELETE_USER;
+  m.expediteur=getpid();
+  fprintf(stderr,"(ADMIN %d) Attente d'une requete...\n",getpid());
+  if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
+    fprintf(stderr,"(ADMIN %d) erreur de msgsnd",getpid());
+  }
+  fprintf(stderr,"(ADMIN %d) envoi de la requete au serveur\n",getpid());
+  if (msgrcv(idQ,&m,sizeof(MESSAGE)-sizeof(long),getpid(),0) == -1)
+  {
+    perror("(ADMIN) Erreur de msgrcv");
+  }
+  if(strcmp(m.data1,"OK")==0){
+    dialogueMessage("retrait",m.texte);
+  }
+  else{
+    dialogueErreur("retrait",m.texte);
+  }
+
+
 }
 
 void WindowAdmin::on_pushButtonAjouterPublicite_clicked()
 {
   // TO DO
+  MESSAGE m;
+  m.type=1;
+  sprintf(m.data1, "%d", getNbSecondes());
+  strcpy(m.texte,getTexte());
+  //printf("%s,%s\n",m.data1,m.texte);
+  m.requete=NEW_PUB;
+  m.expediteur=getpid();
+  fprintf(stderr,"(ADMIN %d) Attente d'une requete...\n",getpid());
+  if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
+    fprintf(stderr,"(ADMIN %d) erreur de msgsnd",getpid());
+  }
 }
 
 void WindowAdmin::on_pushButtonQuitter_clicked()
 {
   // TO DO
+  MESSAGE m;
+  //strcpy(m.data1,getNbSecondes());
+  m.type=1;
   m.requete=LOGOUT_ADMIN;
   m.expediteur=getpid();
   if(msgsnd(idQ,&m,sizeof(MESSAGE)-sizeof(long),0)==-1){
